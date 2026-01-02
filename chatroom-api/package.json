@@ -1,0 +1,8 @@
+{
+  "name": "chatroom-api",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@google/genai": "^1.0.0"
+  }
+}
