@@ -2,11 +2,32 @@ import { GoogleGenAI } from "@google/genai";
 
 const FRIENDS = ["Aiden", "Lucas", "Maya", "Theo"];
 
-function setCors(res) {
-  const origin = process.env.ALLOWED_ORIGIN || "*";
-  res.setHeader("Access-Control-Allow-Origin", origin);
+/**
+ * CORS: GitHub Pages에서 Vercel API 호출 시 preflight(OPTIONS)가 먼저 옴.
+ * - ALLOWED_ORIGIN 이 있으면 그 Origin만 허용
+ * - 없으면 개발용으로 전체 허용(*)
+ */
+function setCors(req, res) {
+  const allowed = process.env.ALLOWED_ORIGIN; // 예: https://kangyunjeong210.github.io
+  const origin = req.headers.origin;
+
+  if (!allowed) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (origin === allowed) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+function stripCodeFences(s) {
+  const t = String(s || "").trim();
+  return t
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
 }
 
 function safeJsonParse(text) {
@@ -15,16 +36,6 @@ function safeJsonParse(text) {
   } catch {
     return null;
   }
-}
-
-// 모델이 가끔 ```json ``` 같은 걸 붙이는 경우가 있어 제거
-function stripCodeFences(s) {
-  const t = String(s || "").trim();
-  return t
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
 }
 
 function normalizeMessages(arr) {
@@ -38,42 +49,46 @@ function normalizeMessages(arr) {
     .slice(0, 4);
 }
 
+function normalizeSummaryAppend(x) {
+  if (!Array.isArray(x)) return [];
+  return x
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
 function buildPrompt({ summary, messages, userMessage }) {
   const recent = (Array.isArray(messages) ? messages : [])
     .slice(-30)
     .map((m) => `${m?.from ?? ""}: ${m?.text ?? ""}`)
     .join("\n");
 
-  // 카톡풍: 짧고 자연스러운 톡, 서로 말 이어받기
-return `
-너는 "Hogwarts Students Group Chat" 시뮬레이터다.
-이 단톡방은 엔딩이 없는, 학생들끼리 계속 굴러가는 채팅방이다.
+  // “사용자 발언 없음”이어도 자기들끼리 굴러가게 만들기
+  const userLine = userMessage ? `user: ${userMessage}` : "(사용자 발언 없음)";
 
-[세계관]
-- 배경: 호그와트 마법학교 5학년 학생들의 일상 단톡방
-- 장소: 기숙사 휴게실, 수업, 도서관, 대연회장, 복도, 퀴디치 경기장
-- 톤: 10대 학생들의 카톡 대화처럼 가볍고 빠른 템포, 장황한 설명 금지
+  return `
+You are a "Hogwarts Students Group Chat" simulator.
+This group chat never ends. Even if the user is silent, the 4 students keep chatting.
 
-[등장인물 — 전부 오리지널 캐릭터]
-- **Aiden** (Gryffindor)  
-  용감하고 성급함. 사건을 키우는 타입. 말투 직설적, “lol”, “seriously?” 자주 씀.
-- **Lucas** (Ravenclaw)  
-  똑똑하고 현실적인 분석가. 규칙, 시험, 과제, 점수에 민감.
-- **Maya** (Hufflepuff)  
-  다정하고 중재자. 감정 잘 읽고 모두를 챙김.
-- **Theo** (Slytherin)  
-  눈치 빠르고 장난기 많음. 소문, 정보, 비밀통로 같은 떡밥을 자주 던짐.
+[World]
+- Hogwarts, 5th-year student life: classes, library, Great Hall, dorm common rooms, house points, curfew, Quidditch.
+- Keep it casual like a real chat app. No long narration.
 
-[대화 규칙]
-- 이 방은 **사용자가 없어도** 4명이 스스로 대화를 이어간다.
-- 사용자가 말하면 그에 반응하되, 사용자가 말하지 않아도 자기들끼리 대화를 계속 이어간다.
-- 절대로 대화를 끝내거나 작별하지 않는다.
-  (예: "오늘은 여기까지", "자자", "다음에" 같은 말 금지)
-- 매 응답에서 4명 모두 1~2문장씩 말한다.
-- 4명 중 최소 1명은 반드시 질문이나 다음 행동 제안을 던진다.
-- 항상 새로운 화제나 작은 사건(수업, 감점, 시험, 교수, 퀴디치, 소문 등)을 이어 붙인다.
+[Characters — original students ONLY]
+- Aiden (Gryffindor): bold, impulsive, direct; uses "lol", "seriously?" sometimes.
+- Lucas (Ravenclaw): analytical, organized; cares about rules, exams, homework, points.
+- Maya (Hufflepuff): warm mediator; empathetic, supportive, keeps the peace.
+- Theo (Slytherin): witty, observant; drops rumors, secret passages, clever hints.
 
-[출력 형식 — 반드시 JSON만]
+[Hard Rules]
+- NEVER end the conversation. No goodbyes, no "let's stop", no "that's it", no "sleep now".
+- In EVERY response, ALL FOUR speak (Aiden, Lucas, Maya, Theo) and each writes 1–2 sentences.
+- At least ONE of them must ask a follow-up question OR propose the next action.
+- Always leave at least ONE "hook" that naturally continues the chat (new topic, rumor, small event).
+- If the user did not speak, continue naturally from the recent chat.
+- Output must be JSON ONLY. No extra text.
+
+[Output JSON schema — must match exactly]
 {
   "messages": [
     { "from": "Aiden", "text": "..." },
@@ -81,90 +96,87 @@ return `
     { "from": "Maya", "text": "..." },
     { "from": "Theo", "text": "..." }
   ],
-  "summary_append": ["기억할만한 사실 0~2개"]
+  "summary_append": ["0-2 short facts worth remembering"]
 }
 
-[지금까지 요약]
-${summary || "(없음)"}
+[Memory Summary]
+${summary || "(none)"}
 
-[최근 대화]
-${recent || "(없음)"}
+[Recent Chat]
+${recent || "(none)"}
 
-[사용자 메시지]
-${userMessage || "(사용자 발언 없음)"}
+[User Message]
+${userLine}
 
-위 규칙대로 4명의 메시지를 JSON으로 출력해.
-`;
+Now produce the JSON response.
+`.trim();
+}
 
 export default async function handler(req, res) {
-  setCors(res);
+  setCors(req, res);
 
+  // Preflight
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+
+  // (디버그용) 브라우저에서 열면 살아있는지 확인 가능
+  if (req.method === "GET") {
+    return res.status(200).json({ ok: true, route: "/api/chat" });
+  }
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "POST only" });
+  }
 
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: "Missing GEMINI_API_KEY" });
 
     const body = req.body || {};
-    const userMessage = body.userMessage;
-
-    if (!userMessage || typeof userMessage !== "string") {
-      return res.status(400).json({ error: "userMessage required" });
-    }
-
     const summary = typeof body.summary === "string" ? body.summary : "";
     const messages = Array.isArray(body.messages) ? body.messages : [];
+    const userMessage =
+      typeof body.userMessage === "string" ? body.userMessage.trim() : "";
 
     const ai = new GoogleGenAI({ apiKey });
 
-    // 가볍게/빠르게: flash 계열 추천
     const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-
     const prompt = buildPrompt({ summary, messages, userMessage });
 
     const result = await ai.models.generateContent({
       model,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      // 너무 길어지는 거 방지(지원되는 경우만 적용됨)
       generationConfig: {
-        temperature: 0.8,
-        maxOutputTokens: 600,
+        temperature: 0.85,
+        maxOutputTokens: 650,
       },
     });
 
     const rawText = stripCodeFences(result?.text || "");
-    let data = safeJsonParse(rawText);
+    const data = safeJsonParse(rawText);
 
-    // 파싱 실패하면 최소 안전 응답
+    // 파싱 실패 시 안전 응답
     if (!data) {
       return res.status(200).json({
         messages: [
-          { from: "민지", text: "어… 방금 뭐라했지? 다시 한번만ㅋㅋ" },
-          { from: "준호", text: "잠깐 오류 난 듯. 한 번만 더 보내봐." },
-          { from: "서연", text: "괜찮아! 다시 말해주면 이어갈게." },
-          { from: "태오", text: "AI도 가끔 버퍼링 타는 날이 있지😵‍💫" },
+          { from: "Aiden", text: "Uh… my spell fizzled. Say that again? lol" },
+          { from: "Lucas", text: "Looks like a glitch. Try sending one more time." },
+          { from: "Maya", text: "It’s okay! We can pick it back up—what happened?" },
+          { from: "Theo", text: "Even magic lags sometimes. Anyway—did you hear that rumor?" },
         ],
         summary_append: [],
       });
     }
 
+    // messages 보정 (항상 4명)
     const normalized = normalizeMessages(data.messages);
+    const map = new Map(normalized.map((m) => [m.from, m]));
+    const filled = FRIENDS.map((name) => map.get(name) || { from: name, text: "…" });
 
-    // 4개 못 채우면 보정(최소 완성형)
-    const byFrom = new Map(normalized.map((m) => [m.from, m]));
-    const filled = FRIENDS.map((name) => byFrom.get(name) || { from: name, text: "ㅋㅋㅋ" });
-
-    const summaryAppend = Array.isArray(data.summary_append)
-      ? data.summary_append
-          .map((x) => (typeof x === "string" ? x.trim() : ""))
-          .filter(Boolean)
-          .slice(0, 4)
-      : [];
+    const summary_append = normalizeSummaryAppend(data.summary_append);
 
     return res.status(200).json({
       messages: filled,
-      summary_append: summaryAppend,
+      summary_append,
     });
   } catch (e) {
     return res.status(500).json({
@@ -173,4 +185,3 @@ export default async function handler(req, res) {
     });
   }
 }
-
