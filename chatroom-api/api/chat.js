@@ -1,11 +1,8 @@
-const { GoogleGenAI } = require("@google/genai");
+import { GoogleGenAI } from "@google/genai";
 
 const FRIENDS = ["Aiden", "Lucas", "Maya", "Theo"];
 
-/**
- * ✅ 1차 디버그용: CORS를 완전 개방(=연결부터 성공시키기)
- * 연결 확인되면 나중에 ALLOWED_ORIGIN 방식으로 잠그자.
- */
+// ✅ 1차 디버그용: CORS 완전 개방(연결부터 성공시키기)
 function setCors(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -20,7 +17,6 @@ function stripCodeFences(s) {
     .trim();
 }
 
-// 모델이 JSON 앞뒤로 말 붙여도 { ... } 만 뽑아 파싱
 function extractJsonObject(text) {
   const s = String(text || "");
   const first = s.indexOf("{");
@@ -116,13 +112,12 @@ Now produce the JSON response.
 `.trim();
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   setCors(req, res);
 
-  // Preflight
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  // 디버그용: 브라우저에서 열면 살아있는지 확인 가능
+  // 디버그용 (브라우저에서 열면 ok 떠야 함)
   if (req.method === "GET") return res.status(200).json({ ok: true, route: "/api/chat" });
 
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
@@ -144,16 +139,12 @@ module.exports = async function handler(req, res) {
     const result = await ai.models.generateContent({
       model,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.85,
-        maxOutputTokens: 650,
-      },
+      generationConfig: { temperature: 0.85, maxOutputTokens: 650 },
     });
 
     const raw = stripCodeFences(result?.text || "");
     const data = safeJsonParse(raw);
 
-    // 파싱 실패 시 안전 응답
     if (!data || !data.messages) {
       return res.status(200).json({
         messages: [
@@ -166,18 +157,15 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // 항상 4명 채우기
     const normalized = normalizeMessages(data.messages);
     const map = new Map(normalized.map((m) => [m.from, m]));
     const filled = FRIENDS.map((name) => map.get(name) || { from: name, text: "..." });
 
-    const summary_append = normalizeSummaryAppend(data.summary_append);
-
-    return res.status(200).json({ messages: filled, summary_append });
-  } catch (e) {
-    return res.status(500).json({
-      error: "server_error",
-      detail: String(e?.message || e),
+    return res.status(200).json({
+      messages: filled,
+      summary_append: normalizeSummaryAppend(data.summary_append),
     });
+  } catch (e) {
+    return res.status(500).json({ error: "server_error", detail: String(e?.message || e) });
   }
-};
+}
