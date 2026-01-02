@@ -3,8 +3,10 @@ const { GoogleGenAI } = require("@google/genai");
 const FRIENDS = ["Aiden", "Lucas", "Maya", "Theo"];
 
 function setCors(req, res) {
-  const allowed = process.env.ALLOWED_ORIGIN;
-  const origin = req.headers.origin;
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
 
   if (!allowed) {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -147,3 +149,4 @@ module.exports = async function handler(req, res) {
     res.status(500).json({ error: "server_error", detail: String(e) });
   }
 };
+
